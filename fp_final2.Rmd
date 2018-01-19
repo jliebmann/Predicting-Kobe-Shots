@@ -1,0 +1,653 @@
+---
+title: "Developing a Model to Predict Whether a Shot from Kobe Bryant is Going In"
+author: "Jason Liebmann, Nicole Berkman and Saurav Bose"
+output:
+  html_document:
+    code_folding: hide
+    df_print: paged
+    self_contained: yes
+    toc: no
+  pdf_document:
+    toc: no
+    toc_depth: 2
+subtitle: STAT 471/571/701 Final Project, Fall 2017
+graphics: yes
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = F, message = F, comment = NA)
+```
+
+```{r}
+library(tidyverse)
+library(ggplot2)
+library(grid)
+library(gridExtra)
+library(car)
+library(caret)
+library(dplyr)
+library(plyr)
+library(caret)
+library(glmnet)
+library(bestglm)
+library(pROC)
+library(ROCR)
+library(randomForest)
+library(tree)
+library(gbm)
+library(lubridate)
+library(ISLR)
+library(gbm)
+```
+
+# Summary
+
+## Background
+The National Basketball Association (NBA) has a long and fantastic history. We have seen the rise and fall of many great players such as Larry Bird, Magic Johnson, Allen Iverson, Michael Jordan and we continue to see new great players enter the league each year. However, few players are lucky enough to leave a legacy that will forever impact the game. One of these players is Kobe Bryant. Kobe played in the NBA for the Los Angeles Lakers for 20 years in which he played 1346 games and averaged 25 points per game. He was an 18x All Star and voted MVP 7x. Kobe hit a number of incredible shots over the course of his career and once scored 81 points in a game. He has made numorous contributions to the game of basketball, resulting in inspiring many others to play. 
+
+In this project, we will examine a dataset that contains every shot of his career. Using this data, we try to find the model that can best predict: Will Kobe make this shot?
+
+## Goal
+The goal of this project is two-fold: we want to determine whether or not one is able to accurately predict whether a shot is going to go in the basket and what factors are powerful indicators of whether a shot will go in or not.
+
+## Dataset
+The dataset contains all of Kobe Bryant's 30,697 shots that he attempted over the course of his career. It contains 25 different variables. 24 of the 25 are predictor variables and the final is the response variable. The dataset contians information not only on the game played, but specifics about in game action such as where Kobe shot the ball from and how much time was left on the clock. Refer to the Appendix for a full description of each of the variables contained in the dataset.   
+  
+There are a few things to highlight about the dataset:  
+
+  1. The origin for the x and y coordinates is the position of the basket  
+  2. There are some negative values for the y coordinates; however, you are able to shoot from behind the basket since the basket extends into the court a little bit  
+  3. The seconds remaining represent the seconds remianing in the minute in which Kobe took the shot, not seconds remaining on the shot clock  
+  4. The team_id and team_name never change since Kobe Bryant played on the Lakers for his whole career  
+  5. If the period is greater than 4, each overtime is counted as one period, so period 6 is equivalent to the second overtime  
+  6. We only know the outcome for 25,697 of the 30,697 shots since 5,000 of the observations in this dataset are NA for the shot_made_flag  
+  7. The dataset simply defines all shots taken from beyond the halfcourt line as backcourt shots  
+  8. A positive x-location correlates to the right side of the court and a negative x-location correlates to the left side of the court  
+  
+
+## Limitations  
+Additionally, there are some limitations to the dataset to be aware of:  
+  1. The dataset only contains shots by Kobe Bryant; therefore, the factors that affect whether or not Kobe made the shot may not be factors for all players. However, the variables included in this model are pretty general, and it is reasonable to expect these factors to influence whether or not most players make their shot.  
+  2. The longitude and langitude of where the shot was taken do not change much and since Kobe traveled across the United States to play basketball, we would expect they would vary more than they do. Therefore, the longitude and latitude values may not be accurate.  
+  3. There are only 30,697 shots included in this dataset and only 25,697 of them have values for whether the shot went in or not so the model will not be built on that many observations.  
+  4. The dataset is from 1996-2016, and the game of basketball is constantly changing, so while the model built may work well for players that played (at least partially) in the same era as Kobe, it may not work well for players that played in other eras. For example, there used to be no three point line; however, now teams are shooting threes at a higher rate than ever before.  
+  
+Despite these limitations, the data represents a good starting point for developing a model that can identify important factors in determining whether Kobe's shot will go in and can help players understand what factors affect shots going in the basket. We also should remember that the prediction and model built from this dataset will be a rough estimation of reality, but we can still use the data to achieve the analysis goals.
+
+## Method
+First and foremost we performed a detailed EDA to better understand the data. Next, we performed some data cleaning and transformation to get rid of redundant features and also to extract new information from the given features.  
+Next, we used multiple method to build a model for prediciting whether Kobe's shots will go in. First, we used LASSO to help us sparce the model and only retain the most important variables. Once we had a list of variables from LASSO, we fit it to a multiple regression model to determine which variables are the biggest facters in determining whether Kobe's shot will go in or not. Once the multiple regression model was fit, we used backwards selection in order to further parce our model and to determine the signifcant factors in determining the outcome of Kobe's shots. Next we fit an Elastic Net to take advantage of the $L_2$ regularization in addition to the $L_1$ regularization that LASSO provides. We performed cros validation to determine the right mix of LASSO and Ridge regression components. Next, we used random forest as another method to build our model. We used cross-validation to tune the number of trees and the number of features picked randomly by each decision tree(mtry). Finally we used Stochastic Gradient Boosting with cross-validation to tune for number of trees and interaction depth.
+In order to pick the best model, we compared the out-sample misclassification error and the Area under the ROC curve (AUC) for each of the models.
+
+## Findings
+
+We found that LASSO has the lowest out-sample misclassification error and the highest AUC of the models we built; therefore, we chose LASSO as our final model. The LASSO fit had an out-of-sample misclassification error of 37.72% (meaning that we can predict the outcome of Kobe's shot with an accuracy of 62.28%) and an out-of-sample AUC of 0.6312. Moreover, the LASSO model revealed that the important factors in determining the outcome of a shot were: Shot Type, Minutes Remaining in the quarter the shot was taken, Seconds Remaining in the minute the shot was taken, the Period (quarter) in which the shot was taken, the years of Season and the distance from which the shot was taken (Shot Distance and Shot Zone Range).
+
+# Data Exploration and Model Building
+
+## EDA
+
+Since we only know whether 25,697 of the 30,697 shots went in, we will perform our EDA on this subset of the data and reserve the rest of it for prediction later on. We also removed some columns in our data or changed them, so please refer to the Appendix for a full description of all the variables in our cleaned dataset.
+```{r, results = 'hide'}
+#getwd()
+#data <- read.csv('data.csv')
+#data <- read.csv('/Users/sauravbose/Data Science/Data Mining/Final Project/data.csv')
+data <- read.csv("/Users/nicoleberkman/Desktop/STAT 471/Final Project/kobe_data.csv")
+data$game_date <- month(as.POSIXlt(data$game_date, format="%Y-%m-%d"))
+data$matchup <- as.character(data$matchup)
+data$matchup <- ifelse(grepl("@",data$matchup)==TRUE,"Away","Home")
+data <- data %>% 
+  dplyr::select(-c(game_event_id,game_id,team_id,team_name,shot_id)) %>% 
+  dplyr::rename(game_month = game_date) %>% 
+  mutate(game_month=as.factor(game_month),matchup = as.factor(matchup), shot_made_flag = as.factor(shot_made_flag)) 
+
+#unknown_data <- data[is.na(data$shot_made_flag) == TRUE,]
+#unknown_data
+data <- na.omit(data)
+
+#write.csv(data,"data.clean.csv",row.names = F)
+summary(data)
+```
+
+```{r}
+ggplot(data = data)+geom_bar(aes(x = shot_made_flag)) +
+  labs(title = "Count of Shots Made and Missed", x="0 = Missed, 1 = Made", y="Count")
+```
+
+From a simple summary of the data, there are many things we can notice about Kobe as a player. One thing we can notice is that Kobe was mostly simple jump shots in his career, about 61.6% of the time (15836/25697 = 0.6162587). So while many Laker and basketball fans may remember all the crazy ways he scored, Kobe took a simple jump shot most of the time. Another interesting finding from the data is that Kobe took more than 50% of his shots in the second half of whatever quarter he shot in, which is not surprising as he was usually called upon a lot during important moments at the end of games to make shots. We can also see that Kobe took 14.62% of his shots during the playoffs which makes sense since Kobe had a lot of success in the playoffs and won 5 NBA championships. Additionally, of the 25,697 shots, about 43.9% of his shots were taken from the center lane of the court, and he did take 72 shots from the backcourt. Overall, Kobe made about 44.6% of the shots he took.  
+
+```{r}
+p1 <- ggplot(data) + geom_histogram(aes(x = minutes_remaining), bins = 12) + 
+  labs( title = "Histogram of Minutes Remaining in Period When Shot was Taken", x = "Minutes Remaining in Period" , y = "Number of Shots")
+p2 <- ggplot(data) + geom_histogram(aes(x = shot_distance), bins = 10) + 
+  labs( title = "Histogram of Shot Distance", x = "Shot Distance" , y = "Number of Shots")
+grid.arrange(p1, p2)
+```
+
+As we can see from the above graphs, the number of shots Kobe took during a period seems to gradually increase as the number of minutes remaining in that period decrease and a spike in the number of shots taken where there are zero minutes left in the period. This general trend and spike at 0 minutes make sense since, as noted before, Kobe was relied on to take and make shots late in games during his career since he was such a good player. We can also note that Kobe took the vast majority of his shots from within roughtly 30 feet of the basket.   
+
+```{r}
+p3 <- data %>% ggplot(aes(x = period))+geom_bar()+theme(axis.text.x=element_text(angle=0, hjust =1))
+p4 <- data %>% ggplot(aes(x = season))+geom_bar()+theme(axis.text.x=element_text(angle=60, hjust =1))
+p5 <- data %>% ggplot(aes(x = shot_type))+geom_bar()+theme(axis.text.x=element_text(angle=60, hjust =1))
+#category names are too long and graphs are too squished together to make the graph appear. NEED TO SPACE OUT
+p6 <- data %>% ggplot(aes(x = shot_zone_area))+geom_bar()+theme(axis.text.x=element_text(angle=60, hjust =1))
+grid.arrange(p3, p4, p5, p6, nrow = 2)
+```
+
+Kobe also took most of his shots within the first 4 periods of the games, which makes sense since most games only have 4 periods. However, we can also see that Kobe took some shots in periods 5, 6 and 7 (overtime, double overtime and triple overtime respectively). We also plotted the number of shots Kobe took in each of the seasons he played. The general trend is that his shot volume slowly increases and then towards the end of his career begins to decline again. There are a few major dips, we can be explained by injuries during the season or the season before. This is especially true for the dip during the 2013-2014 season, when Kobe tore his achilles at the end of the season before and then injured his knee that season. We can also see from the graphs above that Kobe was not a 3PT specialist during his career as he took many more 2PT shots (78.9%) than 3PT shots (21.1%). From looking at the breakdown of his shot zone area, we can see that Kobe took most of his shots from the center lane of the court, and also took slightly more shots from the right side of the court than the left side.  
+
+```{r}
+#boxplots analyzing shots that went in vs. shots that did not
+p7 <- data %>% ggplot(aes(x = shot_made_flag, y = shot_distance)) + 
+  geom_boxplot() + 
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+p8 <- data %>% ggplot(aes(x = shot_made_flag, y = minutes_remaining)) + 
+  geom_boxplot() + 
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+p9 <- data %>% ggplot(aes(x = shot_made_flag, y = period)) + 
+  geom_boxplot() + 
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+p10 <- data %>% ggplot(aes(x = shot_made_flag, y =loc_x )) + 
+  geom_boxplot() + 
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+p11 <- data %>% ggplot(aes(x = shot_made_flag, y = loc_y)) + 
+  geom_boxplot() + 
+  theme(axis.text.x = element_text(angle = 0, hjust = 1))
+grid.arrange(p7, p8, p9, p10, p11, nrow = 3)
+```
+
+As we can see from the charts above, the average shot distance on the shots Kobe missed is higher than the average shot distance on the shots Kobe made. This makes senese as it is easier to make a shot when closer to the basket. Additionally, Kobe has a lot of outliers with high shot distances for shots he missed meaning that he made a very low percentage of his shots from far away, which is to be expected. Kobe also had a higher average of minutes remaining in the period on shots he made than on shots he missed. This makes sense as later in periods and later in games, teams usually play defense harder, thereby making it harder for the opposition to score. Also, at the beginning of the period you are usually fresher since there was just a break in the game, whereas towards the end of periods you can get worn down and more tired which would result in a lower shooting percentage. The average period in the game when Kobe made or missed shots is comparable; however, from the charts it looks as if Kobe made fewer shots later in games than he missed. This could be due to the fact that in the 4th quarter teams are usually more competitive and force the offensive to take tougher shots, or the game is so lopsided that stars like Kobe are on the bench. Also, the average x-location on the court where Kobe took his shots is close to zero for both his missed and made shots which make sense since we saw from above that Kobe likes to shoot mostly in the center of the court. As we can see for his shots made, the distribution seems to slightly favor positive x-location values (the right side of the basket). This makes sense since Kobe is right handed, so layups from that side were easier for him to make. For the y-location, the shots Kobe made had a lower average which makes sense as closer shots are easier to make.  
+In order to further visualise the nature of shots Kobe made, lets look at the court plot below :  
+
+```{r}
+ggplot() +
+    geom_point(data = filter(data, combined_shot_type == "Jump Shot"),
+               aes(x = lon, y = lat), color = "grey", alpha = 0.3, size = 2) +
+    geom_point(data = filter(data, combined_shot_type != "Jump Shot"),
+                   aes(x = lon, y = lat, 
+                       color = combined_shot_type), alpha = 0.7, size = 3) +
+    ylim(c(33.7, 34.0883)) +
+    scale_color_brewer(palette = "Set1") +
+    theme_void() +
+    ggtitle("Type and Location of Shot")
+```
+
+As we can see, most of Kobe's shots were near the basket from the center of the court. Moreover, the Jump Shot (shaded grey) is his favourite shot! Now lets zoom in to look at shots made from a distance 5ft or less from the basket.    
+
+
+```{r}
+ggplot() +
+        geom_point(data = filter(data, combined_shot_type != "Jump Shot",
+                                 shot_distance < 5),
+                       aes(x = loc_x, y = loc_y, 
+                           color = shot_made_flag),
+                   alpha = 0.7, size = 3) +
+        scale_color_brewer(palette = "Set1") +
+        geom_point(aes(x =0, y = 0), size = 5, shape = 4) +
+    theme_void() +
+    ggtitle("Shots From Close to the Basket (< 5ft)")
+```
+
+Visually, we can see that from close to the basket, Kobe successfully made more shots than missed. In addition, through his dynamic career, Kobe was known to make all kinds of glamarous shots. It would be interesting to see how accurate they were.
+
+```{r}
+data %>% dplyr::count(action_type) %>%
+     arrange(desc(n)) %>% filter(n < 20) -> actions
+ data$action_type[data$action_type %in% actions$action_type] <- "Other"
+
+prop.table(table(data$action_type, data$shot_made_flag),1) -> temp
+as.data.frame.matrix(temp) -> temp
+#temp
+temp$shot <- rownames(temp)
+temp <- temp[!is.na(temp),] %>% filter(is.na(shot)==F)
+
+ggplot(temp, aes(x = reorder(shot, `1`), y = 1)) +
+geom_point(aes(y = `1`), size = 3, color = " dark blue", stat = "identity") +
+    coord_flip() +
+    labs(y = "Accuracy", x = "", title = "Accuracy by Shot_type")
+```
+
+It is interesting to see that Kobe was actually better at making the fancier shots. For example, his accuracy with the regular Dunk Shot was about 80% but he made the Slam Dunk, Driving Slam Dunk and Alley Oop Dunk Shots with much greater accuracy of about 98%.
+
+```{r, results = 'hide'}
+#max(summary(data$opponent))
+summary(data$opponent)
+summary(data$shot_made_flag)
+summary(data$season)
+```
+The data also reveals that Kobe took the most shots (1924) during the 2005-2006 season and played the San Antonio Spurs the most out of any opponent during his career.  
+We now have a good idea about Kobe's atheletic career and his style of play. We would now like to predict whether, a shot made by him would be successful or not.   
+
+##Predictive Modeling
+In order to generate the predictive models, we divided the dataset into training and testing sets in a 75%-25% ratio. Moreover, we used 10-fold cross validation to tune the hyperparameters. 
+
+###LASSO
+```{r}
+#have to remove action_type because random forest cannot handle more than 53 predictors and action_type has 57
+data.lasso <- data %>% 
+  dplyr::select(-c(action_type))
+
+set.seed(1)
+n <- nrow(data)
+train.index <- sample(n, n*3/4) # we use about 3/4 of the subjects as the training data.
+data.train <- data.lasso[train.index,]
+data.test <- data.lasso[-train.index, ]
+
+X <- model.matrix(shot_made_flag~., data.train)[, -1]
+Y <- data.train$shot_made_flag
+lasso <- cv.glmnet(x = X, y = Y, alpha = 1, nfolds = 10, family = 'binomial')
+plot(lasso)
+#lasso$lambda.1se
+#get non-zero coefficients
+coef_1se <- coef(lasso, s = 'lambda.1se')
+nzcoef   <- rownames(coef_1se)[which((coef_1se) != 0)][-1]
+#nzcoef
+```
+
+
+When we run our variables from the lasso model in a logistic regression, not all of the variables are still significant at the 0.05 level, so we used backwards selection to parce our model until all of the remaining variables were significant at the 0.05 level. A summary of the LASSO fit is shown below:  
+
+```{r}
+#lasso.fit <- glm(shot_made_flag ~ combined_shot_type + minutes_remaining + period + season + seconds_remaining + shot_zone_area + shot_zone_basic + shot_zone_range + game_month + opponent, data = data.train, family = binomial(logit))
+lasso.fit <- glm(shot_made_flag ~ combined_shot_type + minutes_remaining + period + season + seconds_remaining + shot_distance + shot_type + shot_zone_range+ opponent, data = data.train, family = binomial(logit))
+
+#lasso.fit.prediction <- glm(shot_made_flag ~ combined_shot_type + minutes_remaining + period + season + seconds_remaining + shot_zone_area + shot_zone_basic + shot_zone_range + game_month + opponent, data = data.test, family = binomial(logit))
+#lasso.fit.prediction <- glm(shot_made_flag ~ combined_shot_type + minutes_remaining + period + season + seconds_remaining +  shot_distance + shot_type + opponent, data = data.test, family = binomial(logit))
+
+#Anova(lasso.fit)
+# lasso.fit.2 <- update(lasso.fit, . ~ . -combined_shot_type)
+# lasso.fit.3 <- update(lasso.fit.2, . ~ . -opponent)
+# lasso.fit.4 <- update(lasso.fit.3, . ~ . -game_month)
+
+lasso.fit.2 <- update(lasso.fit, . ~ . -shot_type)
+#Anova(lasso.fit.2)
+lasso.fit.3 <- update(lasso.fit.2, . ~ . -opponent)
+Anova(lasso.fit.3)
+
+lasso.prediction <- predict(lasso.fit.3, data.test, type = "response")
+lasso.prediction.values <- ifelse(lasso.prediction>0.5,1,0)
+```
+
+The final LASSO with backward selection model was $ShotMadeFlag ~ CombinedShotType + MinutesRemaining + Period  + Season + SecondsRemaining +  ShotDistance + ShotZoneRange$  
+The prediction made by the LASSO on the test set are summarised below:  
+```{r}
+t <- table(lasso.prediction.values,data.test$shot_made_flag)
+t
+```
+
+
+###Elastic Net
+The second model is a mixture of LASSO($L_1$ regularization) and Ridge regression ($L_2$ regularization). In order to develop the model we had to run cross validation over alpha to determine the relative contribution of the LASSO and Ridge models. For each value of alpha, the algorithm tests with different values of lambda to find the best value of lambda in terms of cross validation error. We try 6 values of alpha in the range 0 and 1 and they are summarised below:   
+```{r}
+alph <- seq(0,1, by = 0.2)
+set.seed(1)
+
+x <- model.matrix(shot_made_flag~., data.train)[,-1]
+y <- data.train$shot_made_flag
+
+cve.lambda.min <- vector("numeric", length(alph))
+cve.lambda.1se <- vector("numeric", length(alph))
+
+
+for (a in 1:length(alph)){
+ fit.lass <- cv.glmnet(x,y,nfolds = 10, family = "binomial", alpha = alph[a])
+ 
+  cve.lambda.min[a] <- fit.lass$cvm[which(fit.lass$lambda == fit.lass$lambda.min)]
+
+  cve.lambda.1se[a] <- fit.lass$cvm[which(fit.lass$lambda == fit.lass$lambda.1se)]
+}
+
+output.enet <- data.frame(alpha = alph, cve.min = cve.lambda.min, cve.1se = cve.lambda.1se)
+
+
+output.enet %>% arrange(cve.1se)
+```
+We focus on the error correspondind to lambda1se in order to stay consistent with the earlier LASSO model. It is seen that $\alpha = 0.6$ minimizes the cross validation error. Now we fit a Logistic Regression model with $\alpha = 0.6$ and $\lambda = lambda1se$ to develop the Elastic Net.
+
+```{r}
+set.seed(1)
+fit.net <- cv.glmnet(x,y, nfolds = 10, alpha = 0.6, family = "binomial")
+
+
+var.out <- rownames(coef(fit.net))[which(coef(fit.net, s = "lambda.1se")!=0)][-1]
+#var.out
+fit.net.final <- glm(shot_made_flag ~ combined_shot_type + minutes_remaining + period + season + seconds_remaining + shot_distance + shot_type + shot_zone_range+opponent, data.train, family = binomial(logit))
+
+predict.enet <- predict(fit.net.final, data.test, type = "response")
+predict.enet.values <- ifelse(predict.enet>0.5,1,0)
+```
+
+The final Elastic Net with backward selection model was $ShotMadeFlag ~ CombinedShotType + MinutesRemaining + Period  + Season + SecondsRemaining +  ShotDistance + ShotType + ShotZoneRange + Opponent$  
+The prediction made by Elastic Net on the test set are summarised below:  
+```{r}
+t <- table(predict.enet.values,data.test$shot_made_flag)
+t
+```
+
+###Random Forest
+In order to fit a good Random Forest model we need to tune two main parameters : number of trees and mtry. First, we fit an off the shelf model and plot a graph of error vs number of trees to tune for the number of trees. 
+```{r}
+#summary(data$action_type)
+#have to remove action_type because random forest cannot handle more than 53 predictors and action_type has 57
+fit.rf.train <- randomForest(shot_made_flag~., data.train, ntree=500) 
+plot(fit.rf.train)
+#names(fit.rf.train)
+#plot(fit.rf.train$oob.times)
+```
+
+For our random forest, we needed to remove the action_type variable since it has over 53 levels and random forest can only handle factors with fewer than 53 levels. From the above plot, it seems like we can cut the number of trees used to 100. Now fixing the number of trees to 100, we tune mtry.
+
+
+```{r}
+set.seed(1)
+# 
+#The following commented lines are hyperparameter tuning for mtry. 19 values are tried. The code is commented as it takes way too long to run during the knitting process. It was run once in order to figure out the best mtry value.
+
+ rf.error.p <- 1:19  # set up a vector of length 19
+ for (p in 1:19)  # repeat the following code inside { } 19 times
+ {
+   fit.rf <- randomForest(shot_made_flag~., data.train, mtry=p, ntree=100)
+   rf.error.p[p] <- mean(data.train$shot_made_flag != fit.rf$predicted) # collecting oob mse based on 100 trees
+ }
+ #rf.error.p   # oob mse returned: should be a vector of 19
+
+ plot(1:19, rf.error.p, pch=16,
+      xlab="mtry",
+      ylab="mse of mtry", main = "OOB error vs mtry")
+```
+
+Looking at the plot above, we tuned mtry over the range (1,19) and it was found that mtry of 1 gives the lowest OOB error and hence we chose that for our final model.
+
+
+```{r}
+fit.rf.2 <- randomForest(shot_made_flag~., data.train, mtry=1, ntree=100)
+plot(fit.rf.2)
+```
+We ran Random Forest again with 100 trees instead of 500 since after about 50, the error plateaus and we do not derive additional benefits by having extra trees.
+
+The predictions made by the Random Forest on the test set are summarised below:  
+
+```{r}
+predict.rf <- predict(fit.rf.2, newdata=data.test, type="prob")  #probabilities
+predict.rf.values <- ifelse(predict.rf[,2]>=0.5,1,0)
+
+t <- table(predict.rf.values,data.test$shot_made_flag)
+t
+```
+
+
+###Gradient Boosting
+In order to fit the stochastic boosting algorithm, we perform a 5-fold cross to tune the hyperparameters like number of parameters and interaction depth in order to maximize AUC. The cross-validation yielded number of trees = 150 and interaction depth = 2 as summarised below:  
+```{r, results='hide'}
+objControl <- trainControl(method='cv', number=5, returnResamp='none', summaryFunction = twoClassSummary, classProbs = TRUE)
+
+data.train.boost <- data.train
+data.test.boost <- data.test
+
+levels(data.train.boost$shot_made_flag) <- c("fail", "success")
+levels(data.test.boost$shot_made_flag) <- c("fail", "success")
+
+objModel <- train(data.train.boost[,names(data.train.boost)!="shot_made_flag"], data.train.boost[,names(data.train.boost)=="shot_made_flag"], 
+                  method='gbm', 
+                  trControl=objControl,  
+                  metric = "ROC",
+                  preProc = c("center", "scale"))
+```
+
+```{r}
+print(objModel)
+```
+The relative importance of the predictors according to the model is summarised below: 
+
+```{r}
+summary(objModel)
+```
+It is seen that the season and location on court are the most important parameters according to the model.  
+The predictions made by the Stochastic Boosting Algorithm on the test set are summarised below:  
+
+```{r}
+predict.boost <- predict(object=objModel, data.test[,names(data.train.boost)!="shot_made_flag"], type='prob')
+predict.boost.values <- predict(object=objModel, data.test[,names(data.train.boost)!="shot_made_flag"], type='raw')
+
+t <- table(predict.boost.values,data.test.boost$shot_made_flag)
+t
+```
+
+###Model Comparison
+We compare the models based on two cirteria: Misclassification error and AUC (Area Under the ROC curve). First we compare the in-sample and out-of-sample performance of each model.  
+
+####LASSO
+```{r}
+#LASSO
+#in-sample
+set.seed(1)
+
+lasso.pred.train <- predict(lasso.fit.3, data.train, type = "response")
+lasso.pred.train.values <- ifelse(lasso.pred.train>0.5,1,0)
+
+MCE.bayes1.train <- (sum(lasso.pred.train.values[data.train$shot_made_flag == "1"] != "1")
+            + sum(lasso.pred.train.values[data.train$shot_made_flag == "0"] != "0")) / length(data.train$shot_made_flag)
+#MCE.bayes1.train
+
+fit.lasso.roc.train <- roc(data.train$shot_made_flag, lasso.pred.train, col='red')
+
+
+lasso.auc.train <- pROC::auc(fit.lasso.roc.train)
+
+#out-of-sample
+MCE.bayes1.test=(sum(lasso.prediction.values[data.test$shot_made_flag == "1"] != "1")
+            + sum(lasso.prediction.values[data.test$shot_made_flag == "0"] != "0")) / length(data.test$shot_made_flag)
+
+MCE.bayes1.test
+
+fit.lasso.roc.test <- roc(data.test$shot_made_flag, lasso.prediction, col='red')
+lasso.auc.test <- pROC::auc(fit.lasso.roc.test)
+```
+
+We notice that the in-sample misclassification error rate is `r MCE.bayes1.train` with an AUC of `r lasso.auc.train` and the out-of-sample misclassification error rate is `r MCE.bayes1.test` with an AUC of `r lasso.auc.test`. The in-sample and out-of-sample ROC curves are shown below:  
+
+```{r}
+plot(1-fit.lasso.roc.train$specificities, fit.lasso.roc.train$sensitivities, col="red", pch=16, cex=.3, xlab="False Positive", ylab="Sensitivity")
+lines(1-fit.lasso.roc.test$specificities, fit.lasso.roc.test$sensitivities, col="blue", pch=16, cex=.3, xlab="False Positive",  ylab="Sensitivity")
+abline(0,1)
+title("Comparison of in-sample and out-sample ROC curves for LASSO")
+legend("topleft", legend = c("In-Sample", "Out-Sample"), lty=c(1,1),lwd = 4,col = c("red", "blue"))
+```
+
+####Elastic Net
+
+```{r}
+#Elastic Net
+set.seed(1)
+#in-sample
+enet.pred.train <- predict(fit.net.final, data.train, type = "response")
+enet.pred.train.values <- ifelse(enet.pred.train>0.5,1,0)
+
+MCE.bayes1.train.enet <- (sum(enet.pred.train.values[data.train$shot_made_flag == "1"] != "1")
+            + sum(enet.pred.train.values[data.train$shot_made_flag == "0"] != "0")) / length(data.train$shot_made_flag)
+
+#MCE.bayes1.train.enet
+
+fit.enet.roc.train <- roc(data.train$shot_made_flag, enet.pred.train, col='red')
+enet.auc.train <- pROC::auc(fit.enet.roc.train)
+
+#out-of-sample
+MCE.bayes1.test.enet <- (sum(predict.enet.values[data.test$shot_made_flag == "1"] != "1")
+            + sum(predict.enet.values[data.test$shot_made_flag == "0"] != "0")) / length(data.test$shot_made_flag)
+
+#MCE.bayes1.test.enet
+
+fit.enet.roc.test <- roc(data.test$shot_made_flag, predict.enet, col='red')
+enet.auc.test <- pROC::auc(fit.enet.roc.test)
+```
+
+We notice that the in-sample misclassification error rate is `r MCE.bayes1.train.enet` with an AUC of `r enet.auc.train` and the out-of-sample misclassification error rate is `r MCE.bayes1.test.enet` with an AUC of `r enet.auc.test`. The in-sample and out-of-sample ROC curves are shown below:  
+
+
+```{r}
+plot(1-fit.enet.roc.train$specificities, fit.enet.roc.train$sensitivities, col="red", pch=16, cex=.3, xlab="False Positive", ylab="Sensitivity")
+lines(1-fit.enet.roc.test$specificities, fit.enet.roc.test$sensitivities, col="blue", pch=16, cex=.3, xlab="False Positive",  ylab="Sensitivity")
+abline(0,1)
+title("Comparison of in-sample and out-sample ROC curves for Elastic Net")
+legend("topleft", legend = c("In-Sample", "Out-Sample"), lty=c(1,1),lwd = 4,col = c("red", "blue"))
+```
+
+
+####Random Forest
+
+```{r}
+#Random Forest
+set.seed(1)
+#in-sample
+rf.pred.train <- predict(fit.rf.2, newdata=data.train, type = "prob")
+rf.pred.train.values <- ifelse(rf.pred.train[,2]>0.5,1,0)
+
+MCE.bayes1.train.rf <- (sum(rf.pred.train.values[data.train$shot_made_flag == "1"] != "1")
+            + sum(rf.pred.train.values[data.train$shot_made_flag == "0"] != "0")) / length(data.train$shot_made_flag)
+
+#MCE.bayes1.train.rf
+
+fit.rf.roc.train <- roc(data.train$shot_made_flag, rf.pred.train[,2], col='red')
+rf.auc.train <- pROC::auc(fit.rf.roc.train)
+
+#out-of-sample
+MCE.bayes1.test.rf <- (sum(predict.rf.values[data.test$shot_made_flag == "1"] != "1")
+            + sum(predict.rf.values[data.test$shot_made_flag == "0"] != "0")) / length(data.test$shot_made_flag)
+
+#MCE.bayes1.test.rf
+
+fit.rf.roc.test <- roc(data.test$shot_made_flag, predict.rf[,2], col='red')
+rf.auc.test <- pROC::auc(fit.rf.roc.test)
+#rf.auc.test
+```
+
+We notice that the in-sample misclassification error is `r MCE.bayes1.train.rf` with an AUC of `r rf.auc.train` and the out-of-sample misclassification error is `r MCE.bayes1.test.rf` with an AUC of `r rf.auc.test`. The in-sample and out-of-sample ROC curves are shown below:  
+
+
+```{r}
+plot(1-fit.rf.roc.train$specificities, fit.rf.roc.train$sensitivities, col="red", pch=16, cex=.3, xlab="False Positive", ylab="Sensitivity")
+lines(1-fit.rf.roc.test$specificities, fit.rf.roc.test$sensitivities, col="blue", pch=16, cex=.3, xlab="False Positive",  ylab="Sensitivity")
+abline(0,1)
+title("Comparison of in-sample and out-sample ROC curves for Random Forest")
+legend("topleft", legend = c("In-Sample", "Out-Sample"), lty=c(1,1),lwd = 4,col = c("red", "blue"))
+```
+
+
+###Gradient Boosting
+```{r}
+#Gradient Boosting
+set.seed(1)
+#in-sample
+boost.pred.train <- predict(object=objModel, data.train[,names(data.train.boost)!="shot_made_flag"], type='prob')
+boost.predict.train.values <- predict(object=objModel, data.train[,names(data.train.boost)!="shot_made_flag"], type='raw')
+
+MCE.bayes1.train.boost <- (sum(boost.predict.train.values[data.train.boost$shot_made_flag == "success"] != "success")
+            + sum(boost.predict.train.values[data.train.boost$shot_made_flag == "fail"] != "fail")) / length(data.train.boost$shot_made_flag)
+
+#MCE.bayes1.train.boost
+
+fit.boost.roc.train <- roc(data.train.boost$shot_made_flag, boost.pred.train[,2], col='red')
+boost.auc.train <- pROC::auc(fit.boost.roc.train)
+
+#out-of-sample
+MCE.bayes1.test.boost <- (sum(predict.boost.values[data.test.boost$shot_made_flag == "success"] != "success")
+            + sum(predict.boost.values[data.test.boost$shot_made_flag == "fail"] != "fail")) / length(data.test.boost$shot_made_flag)
+
+#MCE.bayes1.test.boost
+fit.boost.roc.test <- roc(data.test.boost$shot_made_flag, predict.boost[,2], col='red')
+boost.auc.test <- pROC::auc(fit.boost.roc.test)
+#rf.auc.test
+```
+
+We notice that the in-sample misclassification error is `r MCE.bayes1.train.boost` with an AUC of `r boost.auc.train` and the out-of-sample misclassification error is `r MCE.bayes1.test.boost` with an AUC of `r boost.auc.test`. The in-sample and out-of-sample ROC curves are shown below:  
+
+```{r}
+plot(1-fit.boost.roc.train$specificities, fit.boost.roc.train$sensitivities, col="red", pch=16, cex=.3, xlab="False Positive", ylab="Sensitivity")
+lines(1-fit.boost.roc.test$specificities, fit.boost.roc.test$sensitivities, col="blue", pch=16, cex=.3, xlab="False Positive",  ylab="Sensitivity")
+abline(0,1)
+title("Comparison of in-sample and out-sample ROC curves for Gradient Boosting")
+legend("topleft", legend = c("In-Sample", "Out-Sample"), lty=c(1,1),lwd = 4,col = c("red", "blue"))
+```
+
+For all the models we see that the in-sample and out-of-sample performances are comparable except in the case of Random-Forest where in the in-sample AUC outperforms the out-of-sample AUC by quite a margin.   
+Now, we compare the out-of-sample performances of the different models to pick our best model.
+The ROC curves of the four models are shown below:    
+
+```{r}
+plot(1-fit.lasso.roc.test$specificities, fit.lasso.roc.test$sensitivities, col="red", pch=16, cex=.3, xlab="False Positive",  ylab="Sensitivity")
+lines(1-fit.enet.roc.test$specificities, fit.enet.roc.test$sensitivities, col="blue", pch=16, cex=.3)
+lines(1-fit.rf.roc.test$specificities, fit.rf.roc.test$sensitivities, col="green", pch=16, cex=.3)
+lines(1-fit.boost.roc.test$specificities, fit.boost.roc.test$sensitivities, col="yellow", pch=16, cex=.3)
+title("Comparison of out-sample ROC curves for the 4 Models")
+legend("topleft", legend = c("LASSO","Elastic Net", "Random Forest","Gradient Boosting"), lty=c(1,1),lwd = 4,col = c("red", "blue","green","yellow"))
+```
+
+The out-sample performance measures are summarised below:   
+1. The misclassification error of LASSO is 37.72% with an AUC of 0.6312.   
+2. The misclassification error of Elastic Net is 38.24% with an AUC of 0.6253.   
+3. The misclassification error of Random forest is 38.35% with an AUC of 0.6243.   
+4. The misclassification error of Gradient Boosting is 38.42% with an AUC of 0.6261.   
+
+We see that LASSO has the lowest misclassification error and the highest AUC and hence we pick LASSO as our final model.
+
+##Conclusion
+
+We set out to answer two questions:  
+1. Can we predict the outcome of Kobe's shot with reasonable accuracy?   
+2. What the the important parameters in determining the outcome of Kobe's shot.  
+
+In order to answer these questions we performed a detailed EDA and developed four predictive models: LASSO, Elastic Net, Random Forest and Gradient Boosting. Based on the misclassification error and AUC we concluded that we can predict the outcome of Kobe's shots with an accuracy of 62.28%. This was achieved by the LASSO fit (out-sample misclassification error = 37.72% and AUC = 0.6312).  
+Moreover, LASSO also revealed that the important factors in determining the outcome of a shot were : Shot Type, Minutes Remaining in the quarter the shot was taken, Seconds Remaining in the minute the shot was taken, the Period (quarter) in which the shot was taken, the years of Season and the distance from which the shot was taken (Shot Distance and Shot Zone Range).
+
+## Appendix  
+
+### Description of Variables  
+Below is a full description of all 25 variables in our original dataset:  
+-**action_type**: the specific type of action being taken by the player when shooting  
+-**combined_shot_type**: the simplified action being taken by the player when shooting  
+-**game_event_id**: the number of the event that the shot was for a given game  
+-**game_id**: the ID number for the specific game being played  
+-**lat**: the latitude of where the ball was shot  
+-**loc_x**: the horizontal (left/right) location where Kobe was on the court when he shot the ball, positive values correspond to the right side of the basket and negative values correspond to the left side of the basket  
+-**loc_y**: the vertical location where Kobe was on the court when he shot the ball (this value can be negative since the basket position reaches out into the court you you are able to shot the ball from slightly behind the basket)  
+-**lon**: the longitude of where the ball was shot  
+-**minutes_remaining**: minutes remaining in the quarter when the shot was taken  
+-**period**: the period (quarter) in which the shot was taken  
+-**playoffs**: whether or not the shot was taken in the playoffs or not  
+-**season**: the years of the season the shot was taken in  
+-**seconds_remaining**: seconds remaining in the minute the shot was taken  
+-**shot_distance**: how far from the basket the shot was taken  
+-**shot_made_flag (this is what you are predicting)**: whether or not the shot goes in  
+-**shot_type**: the type of field goal it was / how many points the shot was worth (2 or 3)  
+-**shot_zone_area**: the general lane of the court in which the shot was taken (left, right, center, etc.)  
+-**shot_zone_basic**: what area of the court the shot was taken in  
+-**shot_zone_range**: a range of distance from which the shot was taken  
+-**team_id**: ID number for the team in team_name  
+-**team_name**: the team which Kobe played on (he played on the Lakers his whole career)  
+-**game_date**: the date on which the game took place  
+-**matchup**: the matchup for the game in which the shot took place  
+-**opponent**: the opposing team  
+-**shot_id**: ID number for each shot in the dataset    
+    
+Below is a description of the variables in our cleaned dataset (many variables carry over from the original dataset but some are different):    
+-**action_type**: the specific type of action being taken by the player when shooting  
+-**combined_shot_type**: the simplified action being taken by the player when shooting  
+-**lat**: the latitude of where the ball was shot  
+-**loc_x**: the horizontal (left/right) location where Kobe was on the court when he shot the ball, positive values correspond to the right side of the basket and negative values correspond to the left side of the basket  
+-**loc_y**: the vertical location where Kobe was on the court when he shot the ball (this value can be negative since the basket position reaches out into the court you you are able to shot the ball from slightly behind the basket)  
+-**lon**: the longitude of where the ball was shot  
+-**minutes_remaining**: minutes remaining in the quarter when the shot was taken  
+-**period**: the period (quarter) in which the shot was taken  
+-**playoffs**: whether or not the shot was taken in the playoffs or not  
+-**season**: the years of the season the shot was taken in  
+-**seconds_remaining**: seconds remaining in the minute the shot was taken  
+-**shot_distance**: how far from the basket the shot was taken  
+-**shot_made_flag (this is what you are predicting)**: whether or not the shot goes in  
+-**shot_type**: the type of field goal it was / how many points the shot was worth (2 or 3)  
+-**shot_zone_area**: the general lane of the court in which the shot was taken (left, right, center, etc.)  
+-**shot_zone_basic**: what area of the court the shot was taken in  
+-**shot_zone_range**: a range of distance from which the shot was taken  
+-**game_month**: month of the year the game was playing in (1 = January, 2 = February, etc.)  
+-**matchup**: whether the matchup was home or away  
+-**opponent**: the opposing team  
